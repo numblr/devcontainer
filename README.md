@@ -65,6 +65,19 @@ is why the per-container config volume lives in `claude-dev`. But:
   bind-mounts (seed, credentials) must stay in each project's file.
 - **`initializeCommand` is not a Feature hook**, so it stays too.
 
+Note the asymmetry in how mounts are written. A project's `devcontainer.json`
+accepts the shorthand **string** form, but a Feature's `devcontainer-feature.json`
+requires the **object** form -- the string form fails metadata validation with
+`/mounts/0 ... must be object`:
+
+```jsonc
+// devcontainer.json          -> string form is fine
+"mounts": ["source=...,target=...,type=volume"]
+
+// devcontainer-feature.json  -> object form REQUIRED (target and type mandatory)
+"mounts": [{ "source": "...", "target": "...", "type": "volume" }]
+```
+
 ## Design notes
 
 - **`remoteUser: vscode` is assumed.** `claude-dev` sets

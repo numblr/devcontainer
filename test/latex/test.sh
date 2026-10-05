@@ -16,8 +16,7 @@ check "biber installed" bash -c "biber --version | head -n1"
 WORK="$(mktemp -d)"
 cat > "$WORK/t.tex" <<'TEX'
 \documentclass{article}
-\usepackage{tikz,pgfplots,natbib,mathtools,bm,booktabs}
-\usepackage{cleveref}% must be loaded after amsmath (pulled in by mathtools)
+\usepackage{tikz,pgfplots,natbib,cleveref,mathtools,bm,booktabs}
 \pgfplotsset{compat=newest}
 \begin{document}
 \section{S}\label{sec:s}
