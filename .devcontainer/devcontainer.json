@@ -1,0 +1,25 @@
+{
+  "name": "${localWorkspaceFolderBasename}",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    },
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+  },
+
+  "remoteUser": "vscode",
+
+  "mounts": [
+    "source=${localEnv:HOME}/.claude-devcon-config,target=/home/vscode/.claude-seed,type=bind,readonly",
+    "source=claude-code-config-${devcontainerId},target=/home/vscode/.claude,type=volume",
+    "source=${localEnv:HOME}/.claude-devcon-shared/.credentials.json,target=/home/vscode/.claude/.credentials.json,type=bind"
+  ],
+
+  "containerEnv": {
+    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
+  },
+
+  "postCreateCommand": "sudo mkdir -p /home/vscode/.claude && { sudo chown -R vscode:vscode /home/vscode/.claude || true; } && { sudo chown -R vscode:nvm \"$(npm root -g)/@anthropic-ai\" || true; } && .devcontainer/scripts/init-claude-config.sh && .devcontainer/scripts/install-rtk.sh"
+}

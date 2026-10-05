@@ -1,0 +1,8 @@
+{
+  "id": "latex",
+  "version": "1.0.0",
+  "name": "TeX Live (pdflatex subset)",
+  "description": "Installs a TeX Live subset providing pdflatex, bibtex and biber, covering pgfplots/TikZ, natbib, cleveref, mathtools/bm, booktabs and the recommended fonts.",
+  "documentationURL": "https://github.com/numblr/devcontainer/tree/main/src/latex",
+  "options": {}
+}

@@ -1,0 +1,27 @@
+// The baseline. Copy to .devcontainer/devcontainer.json and change the image.
+//
+// Replace numblr with your GitHub user/org.
+{
+  "name": "${localWorkspaceFolderBasename}",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+
+  "features": {
+    "ghcr.io/numblr/features/claude-dev:1": {}
+  },
+
+  "remoteUser": "vscode",
+
+  // Runs on the HOST before the container is created, so Docker can never
+  // silently create a *directory* where the credentials file mount expects a
+  // file. Shell-form, so `~` expansion is host-shell dependent: fine on
+  // Linux/macOS, needs adjusting on Windows.
+  "initializeCommand": "mkdir -p ~/.claude-devcon-config ~/.claude-devcon-shared && touch ~/.claude-devcon-shared/.credentials.json",
+
+  // These two must stay here rather than in the feature: ${localEnv:*} is not
+  // supported in feature metadata (only ${devcontainerId} is). The ~/.claude
+  // volume itself IS declared by the feature.
+  "mounts": [
+    "source=${localEnv:HOME}/.claude-devcon-config,target=/home/vscode/.claude-seed,type=bind,readonly",
+    "source=${localEnv:HOME}/.claude-devcon-shared/.credentials.json,target=/home/vscode/.claude/.credentials.json,type=bind"
+  ]
+}

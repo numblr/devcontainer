@@ -1,0 +1,13 @@
+{
+  "seeded": {
+    "image": "mcr.microsoft.com/devcontainers/python:3.12",
+    "remoteUser": "vscode",
+    "features": {
+      "claude-dev": {}
+    },
+    "initializeCommand": "mkdir -p ~/.claude-devcon-config/skills/example && printf '%s' '{\"permissions\":{\"allow\":[\"Read(~/.zshrc)\"]}}' > ~/.claude-devcon-config/settings.json && printf '%s' 'seeded' > ~/.claude-devcon-config/skills/example/SKILL.md",
+    "mounts": [
+      "source=${localEnv:HOME}/.claude-devcon-config,target=/home/vscode/.claude-seed,type=bind,readonly"
+    ]
+  }
+}

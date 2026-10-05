@@ -1,0 +1,22 @@
+{
+  "id": "claude-dev",
+  "version": "1.0.0",
+  "name": "Claude Code + rtk",
+  "description": "Installs Claude Code (native installer, user-owned so background auto-update works), seeds ~/.claude from a host bind-mount, and enables the rtk Claude Code hook. Assumes remoteUser 'vscode'.",
+  "documentationURL": "https://github.com/numblr/devcontainer/tree/main/src/claude-dev",
+  "options": {},
+  "mounts": [
+    "source=claude-code-config-${devcontainerId},target=/home/vscode/.claude,type=volume"
+  ],
+  "containerEnv": {
+    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code"
+      ]
+    }
+  },
+  "postCreateCommand": "/usr/local/share/claude-dev/postcreate.sh"
+}

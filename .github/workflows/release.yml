@@ -1,0 +1,63 @@
+name: Release features
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate feature metadata
+        uses: devcontainers/action@v1
+        with:
+          validate-only: true
+          base-path-to-features: ./src
+
+      - name: Install devcontainer CLI
+        run: npm install -g @devcontainers/cli
+
+      # Runs test/<id>/test.sh plus every entry in test/<id>/scenarios.json.
+      # The claude-dev 'seeded' scenario creates its own seed directory via
+      # initializeCommand, so no runner setup is needed here.
+      - name: Test claude-dev
+        run: devcontainer features test -f claude-dev --base-image mcr.microsoft.com/devcontainers/python:3.12 .
+
+      # Separate step: this one installs ~2GB of TeX Live and is slow, so a
+      # failure here is immediately distinguishable from a claude-dev failure.
+      - name: Test latex
+        run: devcontainer features test -f latex --base-image mcr.microsoft.com/devcontainers/python:3.12 .
+
+  publish:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # generate-docs commits src/*/README.md back
+      packages: write        # push to GHCR
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Publishes ghcr.io/<owner>/features/<id>:<version> for each src/* feature,
+      # tagging <major>, <major>.<minor> and the full version. A feature is only
+      # pushed when its version in devcontainer-feature.json is new, so
+      # re-running on an unchanged tree is a no-op.
+      #
+      # features-namespace is pinned rather than left to default: the default is
+      # the repository NAME, so without this the reference would be
+      # ghcr.io/<owner>/devcontainer/claude-dev and renaming the repo would
+      # break every project that consumes it.
+      - name: Publish features
+        uses: devcontainers/action@v1
+        with:
+          publish-features: true
+          base-path-to-features: ./src
+          features-namespace: ${{ github.repository_owner }}/features
+          generate-docs: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
