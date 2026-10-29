@@ -53,7 +53,20 @@ done
 CFG="$TARGET/.devcontainer/devcontainer.json"
 [ -f "$CFG" ] || { echo "ERROR: $CFG not found." >&2; exit 1; }
 
-NEW="$(OWNER="$OWNER" PLAYWRIGHT="$PLAYWRIGHT" python3 - "$CFG" "$TARGET" <<'PY'
+# This heredoc is deliberately NOT inside a command substitution.
+#
+# bash 3.2 -- still /bin/bash on macOS -- tracks quote state while scanning for
+# the closing paren of $( ), and it does so through a heredoc body too. A single
+# apostrophe in a Python comment ("Docker's", "the project's") therefore made the
+# substitution look unterminated, the parser ran on into the rest of this file,
+# and it died with "syntax error near unexpected token `('" at an unrelated line
+# 200 lines further down. Staging the script in a temp file instead removes that
+# whole class of failure: a top-level heredoc is consumed verbatim, with no
+# paren scanning involved.
+PYSRC="$(mktemp "${TMPDIR:-/tmp}/migrate-devcontainer.XXXXXX")"
+trap 'rm -f "$PYSRC"' EXIT HUP INT TERM
+
+cat > "$PYSRC" <<'PY'
 import json, os, re, sys
 
 path = sys.argv[1]
@@ -291,7 +304,9 @@ if extra:
 
 print(json.dumps(new, indent=2))
 PY
-)" || { echo "ERROR: could not transform $CFG (see message above)." >&2; exit 1; }
+
+NEW="$(OWNER="$OWNER" PLAYWRIGHT="$PLAYWRIGHT" python3 "$PYSRC" "$CFG" "$TARGET")" \
+  || { echo "ERROR: could not transform $CFG (see message above)." >&2; exit 1; }
 
 echo "=== proposed $CFG ==="
 printf '%s\n' "$NEW"
