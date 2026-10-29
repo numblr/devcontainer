@@ -57,6 +57,82 @@ chmod 600 ~/.claude-devcon-shared/.credentials.json
 step. Sign in once in any container; the credentials file is shared, so other
 containers are already signed in.
 
+### Adding Playwright to a project
+
+Three edits to `.devcontainer/devcontainer.json`, then a rebuild. Complete file:
+[`examples/frontend-devcontainer.json`](examples/frontend-devcontainer.json).
+
+**1. The feature**, alongside `claude-dev`:
+
+```jsonc
+"features": {
+  "ghcr.io/numblr/features/claude-dev:1": {},
+  "ghcr.io/numblr/features/playwright-deps:1": {}
+}
+```
+
+**2. `runArgs` — required, not optional.** Docker gives the container a 64 MB
+`/dev/shm`; chromium outgrows it mid-navigation and fails as a confusing
+`Target closed`:
+
+```jsonc
+"runArgs": ["--ipc=host"]
+```
+
+Use `["--shm-size=1g"]` instead if `--ipc=host` is unacceptable. If you cannot
+change `runArgs` at all, pass `args=["--disable-dev-shm-usage"]` to every
+`chromium.launch()` instead.
+
+**3. The browser download**, which belongs to the project — the feature installs
+system libraries only, and Playwright pins the browser revision to the installed
+`playwright` version, so a pre-baked browser would be the wrong one:
+
+```jsonc
+"postCreateCommand": "pip install -e '.[test]' && playwright install chromium"
+```
+
+Needs `pytest-playwright` among the project's test dependencies (or
+`pip install pytest-playwright` directly). ~170 MB into `~/.cache/ms-playwright`,
+re-downloaded on each rebuild.
+
+Then **Dev Containers: Rebuild Container** — not restart. `postCreateCommand`
+only runs on container create.
+
+#### Verify
+
+Self-contained, so it does not need the app running:
+
+```sh
+python -c "
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    b = p.chromium.launch()
+    pg = b.new_page(); pg.set_content('<h1>ok</h1>')
+    print(pg.inner_text('h1')); b.close()"
+```
+
+`playwright install chromium` printing `is already installed` and that command
+printing `ok` means the setup is complete.
+
+#### How Claude uses it
+
+By writing a test and running it, not by driving a browser interactively. Start
+the dev server, then let Claude iterate on a spec:
+
+```python
+# tests/test_settings.py
+def test_settings_renders(page):
+    errors = []
+    page.on("console", lambda m: m.type == "error" and errors.append(m.text))
+    page.goto("http://localhost:5173/settings")
+    assert page.inner_text("h1") == "Settings"
+    assert errors == []          # catches the blank-page-with-a-TypeError case
+    page.screenshot(path="/tmp/settings.png")   # Claude can read the PNG
+```
+
+`localhost` works directly — the dev server runs in the same container. Port
+forwarding only matters for viewing it in your own browser.
+
 ### Why some things cannot move into the feature
 
 A Feature may declare `mounts`, `containerEnv`, `customizations` and lifecycle
@@ -158,6 +234,30 @@ It preserves the base image and non-Claude features, drops what `claude-dev` now
 owns, writes a `.bak-<timestamp>` backup, and removes
 `.devcontainer/scripts/` **only** when it contains nothing but the known old
 scripts. Comments are not carried over — it warns when the original had any.
+
+Add `--playwright` for a project whose frontend you want verifiable, which
+applies all three edits from
+[Adding Playwright to a project](#adding-playwright-to-a-project) at once:
+
+```sh
+tools/migrate-devcontainer.sh --owner numblr --playwright --write ~/path/to/web
+```
+
+It merges `--ipc=host` into any existing `runArgs` rather than replacing them,
+skips it when `--shm-size` is already set, and appends the browser download
+*after* the project's own install steps, since the `playwright` CLI comes from
+the project's dependencies. The summary names only the edits it actually made —
+`runArgs` that is not a list, and a non-string `postCreateCommand`, are reported
+for you to fix by hand instead of being rewritten. Re-running is safe: neither
+the flag nor the browser download is duplicated.
+
+The flag is opt-in because no old config implies a browser, so adding it by
+default would grant every migrated project a capability it never had, at +37 apt
+packages per image. Run without it and the script still prints a `NOTE` when the
+project looks like a frontend (a `package.json` naming vite/react/vue/svelte or
+`@playwright/test`, a `playwright.config.*`, `pytest-playwright` in
+`pyproject.toml`, or an `e2e/` directory), so the reminder arrives where you
+would otherwise forget it.
 
 Then rebuild and verify:
 

@@ -11,11 +11,21 @@ set -euo pipefail
 #
 #   tools/migrate-devcontainer.sh --owner myuser ~/projects/foo
 #   tools/migrate-devcontainer.sh --owner myuser --write ~/projects/foo
+#   tools/migrate-devcontainer.sh --owner myuser --playwright --write ~/projects/web
 #
 # What it preserves: the base image, and any features that are not part of the
 # Claude setup (docker-in-docker, node, ...).
 # What it drops: postCreateCommand, containerEnv, the ~/.claude volume mount,
 # and the anthropics/claude-code feature -- all now owned by claude-dev.
+#
+# --playwright  also add the playwright-deps feature, merge "--ipc=host" into
+#               runArgs and append "playwright install chromium" to
+#               postCreateCommand. Opt-in on purpose: no old config implies a
+#               browser, so doing it by default would hand every migrated
+#               project a capability it never had, at +37 apt packages and
+#               ~200MB per image. Without the flag the script still prints a
+#               NOTE when the project looks like a frontend, so the reminder
+#               arrives where you would otherwise forget it.
 #
 # COMMENTS ARE NOT PRESERVED (devcontainer.json is JSONC; round-tripping
 # comments reliably is not worth the complexity). The script warns when the
@@ -23,13 +33,15 @@ set -euo pipefail
 
 OWNER=""
 WRITE=0
+PLAYWRIGHT=0
 TARGET=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --owner) OWNER="${2:-}"; shift 2 ;;
     --write) WRITE=1; shift ;;
-    -h|--help) sed -n '3,25p' "$0"; exit 0 ;;
+    --playwright) PLAYWRIGHT=1; shift ;;
+    -h|--help) sed -n '3,34p' "$0"; exit 0 ;;
     -*) echo "Unknown flag: $1" >&2; exit 2 ;;
     *) TARGET="$1"; shift ;;
   esac
@@ -41,12 +53,51 @@ done
 CFG="$TARGET/.devcontainer/devcontainer.json"
 [ -f "$CFG" ] || { echo "ERROR: $CFG not found." >&2; exit 1; }
 
-NEW="$(OWNER="$OWNER" python3 - "$CFG" <<'PY'
+NEW="$(OWNER="$OWNER" PLAYWRIGHT="$PLAYWRIGHT" python3 - "$CFG" "$TARGET" <<'PY'
 import json, os, re, sys
 
 path = sys.argv[1]
+project = sys.argv[2]
 owner = os.environ["OWNER"]
+want_pw = os.environ.get("PLAYWRIGHT") == "1"
 raw = open(path).read()
+
+
+def frontend_evidence(root):
+    """Cheap signals that a project has a browser-testable frontend.
+
+    Only used to advise. Deciding this automatically is what --playwright is
+    for: detection is a guess, and a wrong guess silently fattens an image.
+    """
+    found = []
+    pkg = os.path.join(root, "package.json")
+    if os.path.isfile(pkg):
+        try:
+            txt = open(pkg, encoding="utf-8", errors="replace").read()
+        except OSError:
+            txt = ""
+        for dep in ("@playwright/test", "vite", "next", "react", "vue",
+                    "svelte", "@angular/core"):
+            if '"%s"' % dep in txt:
+                found.append("%s in package.json" % dep)
+    for cfg in ("playwright.config.ts", "playwright.config.js",
+                "playwright.config.py"):
+        if os.path.isfile(os.path.join(root, cfg)):
+            found.append(cfg)
+    for req in ("pyproject.toml", "requirements.txt", "requirements-dev.txt"):
+        f = os.path.join(root, req)
+        if not os.path.isfile(f):
+            continue
+        try:
+            txt = open(f, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        if "pytest-playwright" in txt or re.search(r'(?m)^\s*playwright\b', txt):
+            found.append("playwright in %s" % req)
+    for d in ("e2e", os.path.join("tests", "e2e")):
+        if os.path.isdir(os.path.join(root, d)):
+            found.append("%s/ directory" % d)
+    return found
 
 # Strip // comments (naively, but only outside strings) to parse the JSONC.
 def strip_comments(s):
@@ -119,6 +170,59 @@ if needs_latex:
     kept[f"ghcr.io/{owner}/features/latex:1"] = {}
     print("NOTE::old postCreateCommand ran install-latex.sh -> added the latex feature", file=sys.stderr)
 
+# --playwright: three coordinated edits. The feature alone is not enough --
+# without --ipc=host chromium dies mid-navigation on Docker's 64MB /dev/shm,
+# and without the browser download Playwright has nothing to launch.
+IPC = "--ipc=host"
+runargs = old.get("runArgs")
+pw_appended = False
+ipc_added = False
+
+if want_pw:
+    kept[f"ghcr.io/{owner}/features/playwright-deps:1"] = {}
+
+    # Merge, never replace: a project may already set runArgs for its own
+    # reasons. --shm-size is the alternative fix for the same problem, so if it
+    # is already there, adding --ipc=host would be redundant.
+    if runargs is None:
+        runargs = [IPC]
+        ipc_added = True
+    elif isinstance(runargs, list):
+        if any("--shm-size" in str(a) for a in runargs):
+            print("NOTE::runArgs already sets --shm-size; not adding --ipc=host "
+                  "(they fix the same thing)", file=sys.stderr)
+        elif IPC not in runargs:
+            runargs = list(runargs) + [IPC]
+            ipc_added = True
+    else:
+        print(f'WARN::runArgs is a {type(runargs).__name__}, not a list; add "{IPC}" '
+              "by hand or chromium will crash on the 64MB /dev/shm", file=sys.stderr)
+
+    if leftover is None:
+        print('WARN::postCreateCommand is not a plain string, so "playwright install '
+              'chromium" was NOT appended; add it by hand', file=sys.stderr)
+    elif not any("playwright install" in s for s in leftover):
+        # Appended last on purpose: the playwright CLI comes from the project's
+        # own dependencies, so it has to run after whatever installs them.
+        leftover.append("playwright install chromium")
+        pw_appended = True
+
+    # Report only what was actually done -- the runArgs and postCreateCommand
+    # edits each have cases where they are deliberately skipped or impossible,
+    # and a summary that overstates them is worse than none.
+    did = ["the playwright-deps feature"]
+    if ipc_added:
+        did.append('"%s" in runArgs' % IPC)
+    if pw_appended:
+        did.append('"playwright install chromium" in postCreateCommand')
+    print("NOTE::added " + ", ".join(did) + ". The project must supply playwright "
+          "itself (e.g. pytest-playwright in its test dependencies)", file=sys.stderr)
+else:
+    evidence = frontend_evidence(project)
+    if evidence:
+        print("NOTE::looks like a frontend project (%s); re-run with --playwright "
+              "to add playwright-deps" % ", ".join(evidence[:3]), file=sys.stderr)
+
 new = {
     "name": old.get("name", "${localWorkspaceFolderBasename}"),
     "image": old.get("image", "mcr.microsoft.com/devcontainers/python:3.12"),
@@ -141,12 +245,21 @@ if leftover is None:
     new["postCreateCommand"] = pcc
 elif leftover:
     new["postCreateCommand"] = " && ".join(leftover)
-    print(f"NOTE::preserved {len(leftover)} non-Claude postCreateCommand step(s); review them",
-          file=sys.stderr)
+    # Count only what came from the original file; the appended browser download
+    # is reported by the --playwright NOTE above, not as something preserved.
+    carried = len(leftover) - (1 if pw_appended else 0)
+    if carried:
+        print(f"NOTE::preserved {carried} non-Claude postCreateCommand step(s); review them",
+              file=sys.stderr)
+
+# runArgs is handled explicitly above rather than left to the unrecognised-keys
+# path below, which would clobber a merged value with the original.
+if runargs is not None:
+    new["runArgs"] = runargs
 
 # Carry over anything we do not recognise, so nothing is silently lost.
 HANDLED = {"name", "image", "features", "remoteUser", "mounts", "containerEnv",
-           "postCreateCommand", "initializeCommand"}
+           "postCreateCommand", "initializeCommand", "runArgs"}
 extra = {k: v for k, v in old.items() if k not in HANDLED}
 new.update(extra)
 
