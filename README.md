@@ -244,12 +244,22 @@ tools/migrate-devcontainer.sh --owner numblr --playwright --write ~/path/to/web
 ```
 
 It merges `--ipc=host` into any existing `runArgs` rather than replacing them,
-skips it when `--shm-size` is already set, and appends the browser download
-*after* the project's own install steps, since the `playwright` CLI comes from
-the project's dependencies. The summary names only the edits it actually made —
-`runArgs` that is not a list, and a non-string `postCreateCommand`, are reported
-for you to fix by hand instead of being rewritten. Re-running is safe: neither
-the flag nor the browser download is duplicated.
+and skips it when `--shm-size` is already set. The summary names only the edits
+it actually made; `runArgs` that is not a list, and a non-string
+`postCreateCommand`, are reported for you to fix by hand instead of being
+rewritten. Re-running is safe: nothing is duplicated.
+
+**The browser download is only added when `postCreateCommand` already installs
+the project's dependencies** (`pip install`, `poetry install`, `uv sync`,
+`npm ci`, …), and is appended after them. The `playwright` CLI comes from those
+dependencies, so on its own the command fails with `playwright: not found`
+(exit 127) and **aborts container creation** — a migration must never generate
+that. When there is nothing to anchor it to, the script says so and gives you
+the line to add:
+
+```jsonc
+"postCreateCommand": "pip install -e '.[test]' && playwright install chromium"
+```
 
 The flag is opt-in because no old config implies a browser, so adding it by
 default would grant every migrated project a capability it never had, at +37 apt

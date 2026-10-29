@@ -198,14 +198,33 @@ if want_pw:
         print(f'WARN::runArgs is a {type(runargs).__name__}, not a list; add "{IPC}" '
               "by hand or chromium will crash on the 64MB /dev/shm", file=sys.stderr)
 
+    # The browser download needs the playwright CLI, which comes from the
+    # PROJECT's dependencies -- the feature deliberately does not provide it.
+    # So it is only appended when postCreateCommand already installs those
+    # dependencies, and goes last so it runs after them. Appending it to a
+    # postCreateCommand with no install step produces a command that cannot
+    # work: it fails with "playwright: not found" (exit 127) and aborts
+    # container creation. A migration must never generate that.
+    INSTALLS_DEPS = (
+        "pip install", "pip3 install", "-m pip install", "poetry install",
+        "uv sync", "uv pip install", "pdm install", "pipenv install",
+        "npm ci", "npm install", "yarn install", "pnpm install",
+    )
     if leftover is None:
         print('WARN::postCreateCommand is not a plain string, so "playwright install '
               'chromium" was NOT appended; add it by hand', file=sys.stderr)
-    elif not any("playwright install" in s for s in leftover):
-        # Appended last on purpose: the playwright CLI comes from the project's
-        # own dependencies, so it has to run after whatever installs them.
+    elif any("playwright install" in s for s in leftover):
+        pass                                  # already there; do not duplicate
+    elif any(any(k in s for k in INSTALLS_DEPS) for s in leftover):
         leftover.append("playwright install chromium")
         pw_appended = True
+    else:
+        print('WARN::postCreateCommand has no dependency-install step to anchor it to, '
+              'so "playwright install chromium" was NOT added -- on its own it would '
+              'fail with "playwright: not found" and abort container creation. Add it '
+              "after whatever installs this project's dependencies, e.g.\n"
+              '      "postCreateCommand": "pip install -e \'.[test]\' '
+              '&& playwright install chromium"', file=sys.stderr)
 
     # Report only what was actually done -- the runArgs and postCreateCommand
     # edits each have cases where they are deliberately skipped or impossible,
