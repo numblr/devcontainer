@@ -14,6 +14,13 @@ source dev-container-features-test-lib
 # dev.containers.variant=3.10-trixie, i.e. it has already moved to trixie and
 # would prove nothing here -- which is exactly why the first check below exists.
 #
+# This image also happens to carry a third-party apt source whose signing key
+# is no longer in its keyring (yarn, NO_PUBKEY 62D54FD4003F6525), so a strict
+# `apt-get update` exits 100 on it. That is worth keeping rather than avoiding:
+# it is exactly the state of an older project pinned to an older image, and it
+# means this scenario also covers install.sh tolerating a broken source it does
+# not need.
+#
 # Deliberately lighter than test.sh: this scenario exists to prove name
 # resolution and installation, not rendering. Re-downloading ~170MB of chromium
 # on a second image would roughly double CI time to re-test what test.sh

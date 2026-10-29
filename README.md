@@ -124,6 +124,14 @@ requires the **object** form -- the string form fails metadata validation with
   exists rather than just calling it. The `bookworm` scenario in
   `test/playwright-deps/scenarios.json` keeps the fallback path exercised, and
   fails loudly if its image ever stops being pre-`t64`.
+- **`playwright-deps` treats `apt-get update` as best-effort.** apt fails the
+  whole update if any single source fails, and old images carry stale
+  third-party keys — the pinned `python:1-3.10-bookworm` used by the `bookworm`
+  scenario has a yarn repo whose key is gone, so a strict update exits 100 on an
+  otherwise fine image. A failed update is reported and execution continues, but
+  the script then aborts if no package index was fetched at all, so a genuinely
+  broken apt setup still fails loudly instead of being misreported as a missing
+  package. `src/latex/install.sh` still updates strictly; it has not needed this.
 - **Floating `mcr.microsoft.com/devcontainers/python:<minor>` tags move across
   Debian releases.** `python:3.10` is currently labelled
   `dev.containers.variant=3.10-trixie` — so even `did-docker`, which pins only

@@ -41,7 +41,24 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 
 echo "Installing Playwright headless Chromium system dependencies..."
-apt-get update
+
+# Best-effort on purpose, NOT fatal. apt-get update fails as a whole if any one
+# configured source fails, including third-party sources this feature does not
+# need. Old images routinely carry that rot: the pinned python:1-3.10-bookworm
+# image ships a yarn repo whose signing key is no longer in its keyring, so a
+# strict update aborts on an image that is otherwise perfectly usable, and any
+# project pinned to an older image hits the same thing. Debian's own indexes
+# still download; the apt-get install below is the real assertion.
+apt-get update \
+  || echo "playwright-deps: apt-get update reported errors (above); continuing" >&2
+
+# But do not continue blindly. With no usable indexes, pick() would report every
+# package as missing and point at the wrong cause entirely.
+if ! ls /var/lib/apt/lists/*_Packages* >/dev/null 2>&1; then
+  echo "ERROR: no apt package indexes present after apt-get update." >&2
+  echo "  See the apt-get update output above for the repository that failed." >&2
+  exit 1
+fi
 
 # First name that actually exists on this distribution. Fails loudly rather than
 # silently dropping a library, which would surface much later as an unreadable
@@ -62,6 +79,8 @@ pick() {
     esac
   done
   echo "ERROR: none of these packages exist on this distribution: $*" >&2
+  echo "  If apt-get update above reported a failing repository, that is the" >&2
+  echo "  likely cause rather than a genuinely missing package." >&2
   return 1
 }
 
