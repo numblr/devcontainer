@@ -46,13 +46,20 @@ apt-get update
 # First name that actually exists on this distribution. Fails loudly rather than
 # silently dropping a library, which would surface much later as an unreadable
 # "error while loading shared libraries" when chromium launches.
+#
+# Deliberately no pipeline. The obvious `apt-cache policy "$n" | grep -q ...`
+# is broken under `set -o pipefail`: grep -q exits at its first match and closes
+# the pipe, apt-cache then dies of SIGPIPE (141), and pipefail reports the whole
+# pipeline as failed even though the package WAS found. That inverts every
+# lookup, so pick() falls through to the error and aborts the image build.
 pick() {
-  local n
+  local n out
   for n in "$@"; do
-    if apt-cache policy "$n" 2>/dev/null | grep -q 'Candidate: [^(]'; then
-      printf '%s' "$n"
-      return 0
-    fi
+    out="$(apt-cache policy "$n" 2>/dev/null || true)"
+    case "$out" in
+      *"Candidate: (none)"*) ;;          # known to apt, but not installable
+      *"Candidate: "*) printf '%s' "$n"; return 0 ;;
+    esac
   done
   echo "ERROR: none of these packages exist on this distribution: $*" >&2
   return 1

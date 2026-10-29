@@ -10,16 +10,62 @@ source dev-container-features-test-lib
 # "is the package list complete?" come first and name the missing thing
 # directly, and only then does an end-to-end launch run. Conflating the two is
 # what made the latex failure hard to read.
+#
+# None of the checks below pipe into `grep -q`. That pattern breaks under
+# `set -o pipefail` (SIGPIPE from the upstream command is reported as a failed
+# pipeline) and it is what broke src/playwright-deps/install.sh, so it is
+# avoided here too rather than left to depend on which shell options are set.
 
 LDCONFIG="$(command -v ldconfig || echo /sbin/ldconfig)"
 export LDCONFIG
 
-# --- 1. are the libraries actually on the system? -------------------------
+# --- 1. did pick() resolve a real package name on this distribution? -------
 #
-# Checked by SONAME, not package name, because the package names differ between
-# distribution generations (libasound2 vs libasound2t64) while the sonames do
-# not. This is the check that validates pick() in install.sh resolved correctly.
+# Asserts the OUTCOME of the name resolution rather than apt's opinion of what
+# is available, so it needs no apt lists (install.sh deletes them) and no
+# network. Prints which generation was chosen, which is the single most useful
+# line in the log when this feature misbehaves on a new base image.
+check "install.sh resolved one name from each renamed pair" bash -c '
+  is_installed() {
+    case "$(dpkg-query -s "$1" 2>/dev/null || true)" in
+      *"Status: install ok installed"*) return 0 ;;
+    esac
+    return 1
+  }
+  bad=""
+  for pair in libasound2t64:libasound2 \
+              libatk1.0-0t64:libatk1.0-0 \
+              libatk-bridge2.0-0t64:libatk-bridge2.0-0 \
+              libatspi2.0-0t64:libatspi2.0-0 \
+              libcups2t64:libcups2 \
+              libglib2.0-0t64:libglib2.0-0
+  do
+    new="${pair%%:*}"
+    old="${pair##*:}"
+    if is_installed "$new"; then
+      echo "  $new (t64)"
+    elif is_installed "$old"; then
+      echo "  $old (pre-t64)"
+    else
+      bad="$bad $new|$old"
+    fi
+  done
+  if [ -n "$bad" ]; then
+    echo "neither name is installed for:$bad"
+    echo "pick() in src/playwright-deps/install.sh did not resolve these"
+    exit 1
+  fi
+  echo "all renamed pairs resolved"
+'
+
+# --- 2. are the libraries actually on the system? -------------------------
+#
+# Checked by SONAME, not package name, because the names differ between
+# distribution generations while the sonames do not. ldconfig is read once into
+# a variable: 22 greps over a few thousand lines is both slower and the exact
+# pipeline shape worth avoiding.
 check "all chromium sonames resolve" bash -c '
+  cache="$("$LDCONFIG" -p)"
   missing=""
   for lib in \
     libasound.so.2 libatk-1.0.so.0 libatk-bridge-2.0.so.0 libatspi.so.0 \
@@ -28,7 +74,10 @@ check "all chromium sonames resolve" bash -c '
     libX11.so.6 libxcb.so.1 libXcomposite.so.1 libXdamage.so.1 libXext.so.6 \
     libXfixes.so.3 libxkbcommon.so.0 libXrandr.so.2
   do
-    "$LDCONFIG" -p | grep -q "$lib" || missing="$missing $lib"
+    case "$cache" in
+      *"$lib"*) ;;
+      *) missing="$missing $lib" ;;
+    esac
   done
   if [ -n "$missing" ]; then
     echo "missing shared libraries:$missing"
@@ -42,7 +91,7 @@ check "liberation fonts installed" bash -c '
   ls /usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf
 '
 
-# --- 2. Playwright itself, in a venv ---------------------------------------
+# --- 3. Playwright itself, in a venv ---------------------------------------
 #
 # A venv rather than a bare `pip install`, both to dodge PEP 668
 # externally-managed-environment refusals and because it is how a real project
@@ -56,7 +105,7 @@ check "playwright package installs" bash -c '
 
 check "chromium downloads" bash -c '/tmp/pw-venv/bin/playwright install chromium'
 
-# --- 3. nothing chromium links against is unresolved -----------------------
+# --- 4. nothing chromium links against is unresolved -----------------------
 #
 # The analogue of the kpsewhich check in the latex test: it names the missing
 # .so rather than reporting an opaque launch failure. ldd does not see
@@ -67,12 +116,12 @@ check "no unresolved shared libraries in chromium" bash -c '
   missing=""
   while IFS= read -r bin; do
     found=$((found + 1))
-    out="$(ldd "$bin" 2>/dev/null | grep "not found" || true)"
-    if [ -n "$out" ]; then
-      missing="$missing
+    out="$(ldd "$bin" 2>/dev/null || true)"
+    case "$out" in
+      *"not found"*) missing="$missing
 $bin:
-$out"
-    fi
+$(printf "%s\n" "$out" | sed -n "/not found/p")" ;;
+    esac
   done < <(find "$HOME/.cache/ms-playwright" -type f \( -name chrome -o -name headless_shell \) -perm -u+x 2>/dev/null)
 
   if [ "$found" -eq 0 ]; then
@@ -87,7 +136,7 @@ $out"
   echo "$found chromium binary/binaries checked, all libraries resolved"
 '
 
-# --- 4. end to end: it launches and actually renders -----------------------
+# --- 5. end to end: it launches and actually renders -----------------------
 #
 # Quoted heredoc. An unquoted one eats the backslashes and collapses the
 # content -- exactly the bug that made the latex test fail locally.
