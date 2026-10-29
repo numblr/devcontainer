@@ -32,6 +32,13 @@ jobs:
       - name: Test latex
         run: devcontainer features test -f latex --base-image mcr.microsoft.com/devcontainers/python:3.12 .
 
+      # Also separate, and also slow: downloads ~170MB of chromium. The
+      # 'bookworm' scenario additionally builds on an explicitly pinned
+      # 1-3.10-bookworm image to prove the pre-t64 package names still resolve
+      # there -- the floating python:3.10 tag is already on trixie.
+      - name: Test playwright-deps
+        run: devcontainer features test -f playwright-deps --base-image mcr.microsoft.com/devcontainers/python:3.12 .
+
   publish:
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'

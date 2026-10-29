@@ -16,8 +16,9 @@ references, not a forked folder.
 |---|---|
 | `claude-dev` | Installs Claude Code (native installer, user-owned so background auto-update works), seeds `~/.claude` from a host bind-mount, declares the per-container config volume, and enables the rtk Claude Code hook. |
 | `latex` | TeX Live subset: `pdflatex`, `bibtex`, `biber`, plus pgfplots/TikZ, natbib, cleveref, mathtools/bm, booktabs and the recommended fonts. |
+| `playwright-deps` | System libraries and fonts for Playwright's headless Chromium, so Claude can verify frontend code by writing and running Playwright tests. **Installs no browser and no Playwright** — see below. |
 
-Both are published to `ghcr.io/numblr/features/<id>` by
+All are published to `ghcr.io/numblr/features/<id>` by
 [`.github/workflows/release.yml`](.github/workflows/release.yml) on push to
 `main`. Projects pin the **major** (`:1`) so fixes arrive on rebuild.
 
@@ -26,7 +27,8 @@ Both are published to `ghcr.io/numblr/features/<id>` by
 Copy [`examples/plain-devcontainer.json`](examples/plain-devcontainer.json) to
 `.devcontainer/devcontainer.json` and set the image. See also
 [`did-docker`](examples/did-docker-devcontainer.json) (pinned Python +
-docker-in-docker) and [`latex`](examples/latex-devcontainer.json).
+docker-in-docker), [`latex`](examples/latex-devcontainer.json) and
+[`frontend`](examples/frontend-devcontainer.json).
 
 ```jsonc
 {
@@ -64,6 +66,15 @@ is why the per-container config volume lives in `claude-dev`. But:
 - **`${localEnv:*}` is not specified for Feature metadata**, so the two *host*
   bind-mounts (seed, credentials) must stay in each project's file.
 - **`initializeCommand` is not a Feature hook**, so it stays too.
+- **`runArgs` is not Feature metadata**, so `playwright-deps` cannot supply the
+  `--ipc=host` that chromium needs. It stays in the project file, visible, in
+  the same way `docker-in-docker`'s `privileged` does.
+- **The Playwright browser download cannot move in either**, for two independent
+  reasons: Feature lifecycle hooks run *before* the project's
+  `postCreateCommand`, so the project venv does not exist yet and `playwright`
+  is not importable; and Playwright pins an exact browser revision to the
+  installed `playwright` version, so a pre-baked browser would be the wrong
+  revision and be re-downloaded anyway.
 
 Note the asymmetry in how mounts are written. A project's `devcontainer.json`
 accepts the shorthand **string** form, but a Feature's `devcontainer-feature.json`
@@ -104,6 +115,26 @@ requires the **object** form -- the string form fails metadata validation with
 - **Order is load-bearing**: seed, *then* rtk. The seed ships `settings.json`;
   rtk patches it. Reversed, the copy silently removes the hook.
   `test/claude-dev/test.sh` asserts the order in `postcreate.sh`.
+- **`playwright-deps` resolves package names at build time, not from a hardcoded
+  list.** The 64-bit `time_t` transition renamed six of them in Debian 13 and
+  Ubuntu 24.04 (`libasound2` → `libasound2t64`, and likewise `libatk1.0-0`,
+  `libatk-bridge2.0-0`, `libatspi2.0-0`, `libcups2`, `libglib2.0-0`), while
+  Debian 11–12 and Ubuntu 22.04 keep the old names. Playwright's own
+  `install-deps` has no Debian 13 entry at all, which is the reason this feature
+  exists rather than just calling it. The `bookworm` scenario in
+  `test/playwright-deps/scenarios.json` keeps the fallback path exercised, and
+  fails loudly if its image ever stops being pre-`t64`.
+- **Floating `mcr.microsoft.com/devcontainers/python:<minor>` tags move across
+  Debian releases.** `python:3.10` is currently labelled
+  `dev.containers.variant=3.10-trixie` — so even `did-docker`, which pins only
+  the Python minor, is on trixie today and will move again. That is why the
+  `bookworm` scenario pins an explicit `1-3.10-bookworm`, and why the apt names
+  are resolved at build time rather than written down.
+- **Claude verifies frontends by writing tests, not by driving a browser.** An
+  MCP browser server was the alternative; it would put ~20 tool definitions into
+  *every* session in the container, including the backend-only ones. The chosen
+  loop is slower per iteration and only checks what the test asserts, but it
+  leaves a committable artifact behind and costs idle projects nothing.
 
 ## Migrating an existing project
 

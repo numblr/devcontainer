@@ -1,0 +1,8 @@
+{
+  "id": "playwright-deps",
+  "version": "1.0.0",
+  "name": "Playwright headless Chromium system dependencies",
+  "description": "Installs the shared libraries and fonts that Playwright's headless Chromium needs, with package names resolved per distribution (the 64-bit time_t transition renamed six of them). Does NOT install Playwright or any browser -- run 'playwright install chromium' in the project. Requires runArgs ['--ipc=host'] in the project, or chromium crashes on the default 64MB /dev/shm.",
+  "documentationURL": "https://github.com/numblr/devcontainer/tree/main/src/playwright-deps",
+  "options": {}
+}

@@ -1,0 +1,33 @@
+// Baseline + headless Chromium system deps, for projects whose frontend Claude
+// should be able to verify by writing and running Playwright tests.
+{
+  "name": "${localWorkspaceFolderBasename}",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+
+  "features": {
+    "ghcr.io/numblr/features/claude-dev:1": {},
+    "ghcr.io/numblr/features/playwright-deps:1": {}
+  },
+
+  "remoteUser": "vscode",
+
+  // REQUIRED. Docker gives the container a 64MB /dev/shm, which chromium
+  // outgrows on any real page -- it dies mid-navigation with a confusing
+  // "Target closed". This cannot move into the feature: runArgs is not Feature
+  // metadata. Same class as docker-in-docker's "privileged".
+  // Alternative if --ipc=host is unacceptable: "--shm-size=1g".
+  "runArgs": ["--ipc=host"],
+
+  "initializeCommand": "mkdir -p ~/.claude-devcon-config ~/.claude-devcon-shared && touch ~/.claude-devcon-shared/.credentials.json",
+
+  "mounts": [
+    "source=${localEnv:HOME}/.claude-devcon-config,target=/home/vscode/.claude-seed,type=bind,readonly",
+    "source=${localEnv:HOME}/.claude-devcon-shared/.credentials.json,target=/home/vscode/.claude/.credentials.json,type=bind"
+  ],
+
+  // The feature installs system libraries only. The browser download belongs to
+  // the project: Playwright pins an exact browser revision to the installed
+  // playwright version, so it has to happen after the project's deps are in.
+  // ~170MB into ~/.cache/ms-playwright, re-run on each rebuild.
+  "postCreateCommand": "pip install -e '.[test]' && playwright install chromium"
+}
