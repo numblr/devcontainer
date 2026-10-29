@@ -23,11 +23,16 @@
   "mounts": [
     "source=${localEnv:HOME}/.claude-devcon-config,target=/home/vscode/.claude-seed,type=bind,readonly",
     "source=${localEnv:HOME}/.claude-devcon-shared/.credentials.json,target=/home/vscode/.claude/.credentials.json,type=bind"
-  ],
+  ]
 
-  // The feature installs system libraries only. The browser download belongs to
-  // the project: Playwright pins an exact browser revision to the installed
-  // playwright version, so it has to happen after the project's deps are in.
-  // ~170MB into ~/.cache/ms-playwright, re-run on each rebuild.
-  "postCreateCommand": "pip install -e '.[test]' && playwright install chromium"
+  // No postCreateCommand for Playwright on purpose. The feature provides the OS
+  // libraries -- the part no virtualenv can provide. The playwright package and
+  // its pinned browser revision belong to each venv that runs browser tests,
+  // and a workspace may hold several, so there is no single venv to target here.
+  // Per such venv, once:
+  //
+  //   pip install pytest-playwright && playwright install chromium
+  //
+  // ~170MB, but ~/.cache/ms-playwright is shared per user: venvs on the same
+  // playwright version reuse one download.
 }

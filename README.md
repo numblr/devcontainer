@@ -83,20 +83,23 @@ Use `["--shm-size=1g"]` instead if `--ipc=host` is unacceptable. If you cannot
 change `runArgs` at all, pass `args=["--disable-dev-shm-usage"]` to every
 `chromium.launch()` instead.
 
-**3. The browser download**, which belongs to the project — the feature installs
-system libraries only, and Playwright pins the browser revision to the installed
-`playwright` version, so a pre-baked browser would be the wrong one:
+Then **Dev Containers: Rebuild Container** — not restart; the feature's apt
+install happens at image build.
 
-```jsonc
-"postCreateCommand": "pip install -e '.[test]' && playwright install chromium"
+**3. Playwright itself, once per venv** that runs browser tests — *not* in
+`devcontainer.json`:
+
+```sh
+pip install pytest-playwright && playwright install chromium
 ```
 
-Needs `pytest-playwright` among the project's test dependencies (or
-`pip install pytest-playwright` directly). ~170 MB into `~/.cache/ms-playwright`,
-re-downloaded on each rebuild.
-
-Then **Dev Containers: Rebuild Container** — not restart. `postCreateCommand`
-only runs on container create.
+This is the one part that cannot be done for you, and the reason is worth
+knowing: `pytest-playwright` is a pytest **plugin**, so it has to live in the
+same environment as the `pytest` that runs your tests. A workspace holding
+several venvs needs it in each one that runs browser tests. The browser download
+is ~170 MB, but `~/.cache/ms-playwright` is per *user*, not per venv — venvs on
+the same `playwright` version share one download, and differing versions coexist
+as separate revision directories.
 
 #### Verify
 
@@ -145,12 +148,16 @@ is why the per-container config volume lives in `claude-dev`. But:
 - **`runArgs` is not Feature metadata**, so `playwright-deps` cannot supply the
   `--ipc=host` that chromium needs. It stays in the project file, visible, in
   the same way `docker-in-docker`'s `privileged` does.
-- **The Playwright browser download cannot move in either**, for two independent
-  reasons: Feature lifecycle hooks run *before* the project's
-  `postCreateCommand`, so the project venv does not exist yet and `playwright`
-  is not importable; and Playwright pins an exact browser revision to the
-  installed `playwright` version, so a pre-baked browser would be the wrong
-  revision and be re-downloaded anyway.
+- **Playwright itself cannot move in either**, for three independent reasons,
+  the last of which settles it: Feature lifecycle hooks run *before* the
+  project's `postCreateCommand`, so no project venv exists yet and `playwright`
+  is not importable; Playwright pins an exact browser revision to the installed
+  package version, so a pre-baked browser would be the wrong revision and be
+  re-downloaded anyway; and **`pytest-playwright` is a pytest plugin, so it must
+  live in the environment running `pytest`** — installed into the image's Python
+  it is invisible to every venv. The split lands where the technology forces it:
+  apt libraries cannot live in a venv, and Playwright packages cannot be shared
+  across venvs.
 
 Note the asymmetry in how mounts are written. A project's `devcontainer.json`
 accepts the shorthand **string** form, but a Feature's `devcontainer-feature.json`
@@ -249,17 +256,12 @@ it actually made; `runArgs` that is not a list, and a non-string
 `postCreateCommand`, are reported for you to fix by hand instead of being
 rewritten. Re-running is safe: nothing is duplicated.
 
-**The browser download is only added when `postCreateCommand` already installs
-the project's dependencies** (`pip install`, `poetry install`, `uv sync`,
-`npm ci`, …), and is appended after them. The `playwright` CLI comes from those
-dependencies, so on its own the command fails with `playwright: not found`
-(exit 127) and **aborts container creation** — a migration must never generate
-that. When there is nothing to anchor it to, the script says so and gives you
-the line to add:
-
-```jsonc
-"postCreateCommand": "pip install -e '.[test]' && playwright install chromium"
-```
+**It never writes the browser download**, and deliberately touches no
+`postCreateCommand`. There is no single correct venv for it to target — a
+workspace may hold several, on different `playwright` versions — and a bare
+`playwright install chromium` fails with `playwright: not found` (exit 127) and
+**aborts container creation**. The flag's `NOTE` names the per-venv command
+instead.
 
 The flag is opt-in because no old config implies a browser, so adding it by
 default would grant every migrated project a capability it never had, at +37 apt

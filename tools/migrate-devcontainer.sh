@@ -18,14 +18,19 @@ set -euo pipefail
 # What it drops: postCreateCommand, containerEnv, the ~/.claude volume mount,
 # and the anthropics/claude-code feature -- all now owned by claude-dev.
 #
-# --playwright  also add the playwright-deps feature, merge "--ipc=host" into
-#               runArgs and append "playwright install chromium" to
-#               postCreateCommand. Opt-in on purpose: no old config implies a
-#               browser, so doing it by default would hand every migrated
-#               project a capability it never had, at +37 apt packages and
-#               ~200MB per image. Without the flag the script still prints a
-#               NOTE when the project looks like a frontend, so the reminder
-#               arrives where you would otherwise forget it.
+# --playwright  also add the playwright-deps feature and merge "--ipc=host"
+#               into runArgs -- the two edits that are project-wide. It does
+#               NOT touch postCreateCommand: the feature provides the OS
+#               libraries, while the playwright package and its pinned
+#               browser revision belong to each venv that runs the tests,
+#               and a workspace may hold several. Per such venv, run:
+#                 pip install pytest-playwright && playwright install chromium
+#               Opt-in on purpose: no old config implies a browser, so doing
+#               it by default would hand every migrated project a capability
+#               it never had, at +37 apt packages and ~200MB per image.
+#               Without the flag the script still prints a NOTE when the
+#               project looks like a frontend, so the reminder arrives where
+#               you would otherwise forget it.
 #
 # COMMENTS ARE NOT PRESERVED (devcontainer.json is JSONC; round-tripping
 # comments reliably is not worth the complexity). The script warns when the
@@ -183,12 +188,11 @@ if needs_latex:
     kept[f"ghcr.io/{owner}/features/latex:1"] = {}
     print("NOTE::old postCreateCommand ran install-latex.sh -> added the latex feature", file=sys.stderr)
 
-# --playwright: three coordinated edits. The feature alone is not enough --
-# without --ipc=host chromium dies mid-navigation on Docker's 64MB /dev/shm,
-# and without the browser download Playwright has nothing to launch.
+# --playwright: two project-wide edits. The feature alone is not enough --
+# without --ipc=host chromium dies mid-navigation on Docker's 64MB /dev/shm.
+# The browser download is NOT one of them; see below.
 IPC = "--ipc=host"
 runargs = old.get("runArgs")
-pw_appended = False
 ipc_added = False
 
 if want_pw:
@@ -211,44 +215,22 @@ if want_pw:
         print(f'WARN::runArgs is a {type(runargs).__name__}, not a list; add "{IPC}" '
               "by hand or chromium will crash on the 64MB /dev/shm", file=sys.stderr)
 
-    # The browser download needs the playwright CLI, which comes from the
-    # PROJECT's dependencies -- the feature deliberately does not provide it.
-    # So it is only appended when postCreateCommand already installs those
-    # dependencies, and goes last so it runs after them. Appending it to a
-    # postCreateCommand with no install step produces a command that cannot
-    # work: it fails with "playwright: not found" (exit 127) and aborts
-    # container creation. A migration must never generate that.
-    INSTALLS_DEPS = (
-        "pip install", "pip3 install", "-m pip install", "poetry install",
-        "uv sync", "uv pip install", "pdm install", "pipenv install",
-        "npm ci", "npm install", "yarn install", "pnpm install",
-    )
-    if leftover is None:
-        print('WARN::postCreateCommand is not a plain string, so "playwright install '
-              'chromium" was NOT appended; add it by hand', file=sys.stderr)
-    elif any("playwright install" in s for s in leftover):
-        pass                                  # already there; do not duplicate
-    elif any(any(k in s for k in INSTALLS_DEPS) for s in leftover):
-        leftover.append("playwright install chromium")
-        pw_appended = True
-    else:
-        print('WARN::postCreateCommand has no dependency-install step to anchor it to, '
-              'so "playwright install chromium" was NOT added -- on its own it would '
-              'fail with "playwright: not found" and abort container creation. Add it '
-              "after whatever installs this project's dependencies, e.g.\n"
-              '      "postCreateCommand": "pip install -e \'.[test]\' '
-              '&& playwright install chromium"', file=sys.stderr)
+    # The browser download is deliberately NOT written into postCreateCommand.
+    # The feature provides the OS libraries, which is the part no virtualenv can
+    # provide; the playwright package and its pinned browser revision belong to
+    # whichever venv runs the tests. A workspace can hold several venvs, on
+    # different playwright versions, so there is no single correct place for it
+    # here -- and a bare "playwright install chromium" aborts container creation
+    # with "playwright: not found" (exit 127).
 
-    # Report only what was actually done -- the runArgs and postCreateCommand
-    # edits each have cases where they are deliberately skipped or impossible,
-    # and a summary that overstates them is worse than none.
+    # Report only what was actually done: the runArgs edit has cases where it is
+    # deliberately skipped, and a summary that overstates it is worse than none.
     did = ["the playwright-deps feature"]
     if ipc_added:
         did.append('"%s" in runArgs' % IPC)
-    if pw_appended:
-        did.append('"playwright install chromium" in postCreateCommand')
-    print("NOTE::added " + ", ".join(did) + ". The project must supply playwright "
-          "itself (e.g. pytest-playwright in its test dependencies)", file=sys.stderr)
+    print("NOTE::added " + ", ".join(did) + ". Per venv that runs browser tests: "
+          "pip install pytest-playwright && playwright install chromium "
+          "(browsers are shared via ~/.cache/ms-playwright)", file=sys.stderr)
 else:
     evidence = frontend_evidence(project)
     if evidence:
@@ -277,12 +259,8 @@ if leftover is None:
     new["postCreateCommand"] = pcc
 elif leftover:
     new["postCreateCommand"] = " && ".join(leftover)
-    # Count only what came from the original file; the appended browser download
-    # is reported by the --playwright NOTE above, not as something preserved.
-    carried = len(leftover) - (1 if pw_appended else 0)
-    if carried:
-        print(f"NOTE::preserved {carried} non-Claude postCreateCommand step(s); review them",
-              file=sys.stderr)
+    print(f"NOTE::preserved {len(leftover)} non-Claude postCreateCommand step(s); review them",
+          file=sys.stderr)
 
 # runArgs is handled explicitly above rather than left to the unrecognised-keys
 # path below, which would clobber a merged value with the original.
