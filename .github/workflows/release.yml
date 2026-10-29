@@ -10,7 +10,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Validate feature metadata
         uses: devcontainers/action@v1
@@ -48,7 +48,7 @@ jobs:
       packages: write        # push to GHCR
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Publishes ghcr.io/<owner>/features/<id>:<version> for each src/* feature,
       # tagging <major>, <major>.<minor> and the full version. A feature is only
