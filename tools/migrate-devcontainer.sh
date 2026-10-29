@@ -86,6 +86,39 @@ for fid, opts in (old.get("features") or {}).items():
     kept[fid] = opts
 kept[f"ghcr.io/{owner}/features/claude-dev:1"] = {}
 
+# Classify every segment of the old postCreateCommand instead of discarding the
+# whole string. Anything that is not recognised Claude/rtk boilerplate is either
+# translated to a feature (LaTeX) or preserved verbatim -- otherwise a project
+# that did real work in postCreateCommand would lose it silently.
+CLAUDE_BOILERPLATE = (
+    "init-claude-config.sh",
+    "install-rtk.sh",
+    "mkdir -p /home/vscode/.claude",
+    "chown -R vscode:vscode /home/vscode/.claude",
+    "@anthropic-ai",            # the old npm-global chown
+)
+needs_latex, leftover = False, []
+pcc = old.get("postCreateCommand") or ""
+if isinstance(pcc, str) and pcc.strip():
+    for seg in pcc.split("&&"):
+        seg = seg.strip().strip("{}").strip().rstrip(";").strip()
+        if not seg:
+            continue
+        if "install-latex.sh" in seg:
+            needs_latex = True
+        elif any(b in seg for b in CLAUDE_BOILERPLATE):
+            continue
+        else:
+            leftover.append(seg)
+elif pcc:
+    print(f"WARN::postCreateCommand is not a plain string ({type(pcc).__name__}); "
+          "preserved verbatim, review it by hand", file=sys.stderr)
+    leftover = None  # signal: copy as-is
+
+if needs_latex:
+    kept[f"ghcr.io/{owner}/features/latex:1"] = {}
+    print("NOTE::old postCreateCommand ran install-latex.sh -> added the latex feature", file=sys.stderr)
+
 new = {
     "name": old.get("name", "${localWorkspaceFolderBasename}"),
     "image": old.get("image", "mcr.microsoft.com/devcontainers/python:3.12"),
@@ -102,6 +135,14 @@ new = {
         "target=/home/vscode/.claude/.credentials.json,type=bind",
     ],
 }
+
+# Preserve any non-Claude postCreateCommand work.
+if leftover is None:
+    new["postCreateCommand"] = pcc
+elif leftover:
+    new["postCreateCommand"] = " && ".join(leftover)
+    print(f"NOTE::preserved {len(leftover)} non-Claude postCreateCommand step(s); review them",
+          file=sys.stderr)
 
 # Carry over anything we do not recognise, so nothing is silently lost.
 HANDLED = {"name", "image", "features", "remoteUser", "mounts", "containerEnv",
